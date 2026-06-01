@@ -1,0 +1,16 @@
+{
+  "name": "z8-http",
+  "version": "1.0.0",
+  "description": "HTTP client for Z8 API",
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "Vladimir Pruskalev",
+  "license": "Apache-2.0",
+  "type": "module"
+}

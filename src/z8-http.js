@@ -1,0 +1,246 @@
+/**
+ * @typedef {Object} Z8Period
+ * @property {string|null} [start]
+ * @property {string|null} [finish]
+ */
+
+/**
+ * @typedef {Object} Z8ReadOptions
+ * @property {string} request - Имя запроса/регистра в Z8 (обязательный).
+ * @property {string} [query] - Ключ предопределённого query внутри регистра.
+ * @property {string[]} [fields] - Имена колонок для ответа.
+ * @property {object[]} [quickFilter] - Быстрые фильтры UI.
+ * @property {object[]} [filter] - Условия фильтрации записей.
+ * @property {object[]} [where] - Дополнительные условия отбора.
+ * @property {object[]} [sort] - Порядок сортировки.
+ * @property {object} [values] - Параметры запроса (подстановки для query и т.п.).
+ * @property {Z8Period} [period] - Период отбора по датам.
+ * @property {number} [start=0] - Смещение постраничного чтения.
+ * @property {number} [limit=200] - Максимум записей в ответе.
+ */
+
+/**
+ * @typedef {Object} Z8DestroyOptions
+ * @property {string} request - Имя запроса/регистра в Z8 (обязательный).
+ * @property {string[]} [ids] - Идентификаторы записей для удаления.
+ */
+
+/**
+ * @typedef {Object} Z8WriteOptions
+ * @property {string} request - Имя запроса/регистра в Z8 (обязательный).
+ * @property {object[]} [data] - Записи для создания или обновления.
+ */
+
+export class Z8Http {
+  constructor(options = {}) {
+    this.url = options.url ?? '/request.json'
+    this.session = options.session ?? null
+    this.fetchImpl = options.fetchImpl ?? globalThis.fetch
+  }
+
+  setSession(session) {
+    this.session = session && String(session).trim() ? String(session).trim() : null
+  }
+
+  requireSession() {
+    if (!this.session) {
+      throw new Error('Z8: session is not set. Log in first.')
+    }
+  }
+
+  requireRequest(request) {
+    if (!request || typeof request !== 'string' || !String(request).trim()) {
+      throw new Error('Z8: request is required.')
+    }
+  }
+
+  _encodeFormFields(fields) {
+    const body = new URLSearchParams()
+    for (const [k, v] of Object.entries(fields)) {
+      if (v === undefined) continue
+      body.set(k, typeof v === 'string' ? v : JSON.stringify(v))
+    }
+    return body
+  }
+
+  async postForm(fields) {
+    const body = this._encodeFormFields(fields)
+
+    const res = await this.fetchImpl(this.url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+      },
+      body,
+    })
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => '')
+      throw new Error(`Z8 request failed: ${res.status} ${res.statusText}${text ? `\n${text}` : ''}`)
+    }
+
+    return await res.json()
+  }
+
+  /**
+   * Авторизация в Z8 API (`request: 'login'`).
+   * @param {string} login
+   * @param {string} [password]
+   * @returns {Promise<object>}
+   */
+  async login(login, password) {
+    const payload = {
+      request: 'login',
+      login,
+      experimental: true,
+    }
+
+    const pwd = typeof password === 'string' ? password.trim() : password
+    if (pwd !== undefined && pwd !== null && String(pwd).length > 0) {
+      payload.password = pwd
+    }
+
+    return await this.postForm(payload)
+  }
+
+  /**
+   * Собирает payload для `read` / `count` (`action: 'read'`).
+   * @param {Z8ReadOptions} [options]
+   * @returns {object}
+   * @private
+   */
+  _buildReadPayload({
+    request,
+    query,
+    fields,
+    quickFilter,
+    filter,
+    where,
+    sort,
+    values,
+    period = { start: null, finish: null },
+    start = 0,
+    limit = 200,
+  } = {}) {
+    this.requireSession()
+    this.requireRequest(request)
+
+    const payload = {
+      action: 'read',
+      request,
+      period,
+      start,
+      limit,
+      session: this.session,
+    }
+
+    if (query !== undefined && query !== null && String(query).length > 0) {
+      payload.query = query
+    }
+    if (Array.isArray(fields) && fields.length > 0) {
+      payload.fields = fields
+    }
+    if (Array.isArray(quickFilter) && quickFilter.length > 0) {
+      payload.quickFilter = quickFilter
+    }
+    if (Array.isArray(filter) && filter.length > 0) {
+      payload.filter = filter
+    }
+    if (Array.isArray(where) && where.length > 0) {
+      payload.where = where
+    }
+    if (Array.isArray(sort) && sort.length > 0) {
+      payload.sort = sort
+    }
+    if (values != null) {
+      payload.values = values
+    }
+
+    return payload
+  }
+
+  /**
+   * Чтение данных регистра/запроса Z8 API (`action: 'read'`).
+   * @param {Z8ReadOptions} [options]
+   * @returns {Promise<object>}
+   */
+  async read(options = {}) {
+    return await this.postForm(this._buildReadPayload(options))
+  }
+
+  /**
+   * Подсчёт записей по тем же фильтрам, что и `read` (`count: 'true'`).
+   * @param {Z8ReadOptions} [options]
+   * @returns {Promise<object>}
+   */
+  async count(options = {}) {
+    const payload = this._buildReadPayload(options)
+    payload.count = 'true'
+    return await this.postForm(payload)
+  }
+
+  /**
+   * Создание записей Z8 API (`action: 'create'`).
+   * @param {Z8WriteOptions} [options]
+   * @returns {Promise<object>}
+   */
+  async create({ request, data } = {}) {
+    this.requireSession()
+    this.requireRequest(request)
+
+    return await this.postForm({
+      request,
+      action: 'create',
+      data: Array.isArray(data) ? data : [data],
+      session: this.session,
+    })
+  }
+
+  /**
+   * Обновление записей Z8 API (`action: 'update'`).
+   * @param {Z8WriteOptions} [options]
+   * @returns {Promise<object>}
+   */
+  async update({ request, data } = {}) {
+    this.requireSession()
+    this.requireRequest(request)
+
+    return await this.postForm({
+      request,
+      action: 'update',
+      data: Array.isArray(data) ? data : [data],
+      session: this.session,
+    })
+  }
+
+  /**
+   * Удаление записей Z8 API (`action: 'destroy'`).
+   * @param {Z8DestroyOptions} [options]
+   * @returns {Promise<object>}
+   */
+  async destroy({ request, ids } = {}) {
+    this.requireSession()
+    this.requireRequest(request)
+
+    const data = Array.isArray(ids)
+      ? ids.map((id) => ({ recordId: String(id) }))
+      : []
+
+    return await this.postForm({
+      request,
+      action: 'destroy',
+      data,
+      session: this.session,
+    })
+  }
+
+  async attach() {}
+
+  async detach() {}
+
+  async action() {}
+
+  async export() {}
+
+  async report() {}
+}
