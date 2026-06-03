@@ -39,6 +39,16 @@
  * @property {object[]} [parameters] - Параметры action.
  */
 
+/**
+ * @typedef {Object} Z8AttachOptions
+ * @property {string} request - Имя запроса/регистра в Z8 (обязательный).
+ * @property {string} recordId - Идентификатор записи.
+ * @property {string} field - Имя поля вложения.
+ * @property {Object} [details] - JSON-объект метаданных вложения (по умолчанию `{}`).
+ * @property {Blob|File} file - Файл для загрузки.
+ * @property {string} [fileName] - Имя файла в multipart (если не задано — из File или `upload.bin`).
+ */
+
 export class Z8Http {
   constructor(options = {}) {
     this.url = options.url ?? '/request.json'
@@ -68,6 +78,22 @@ export class Z8Http {
     }
   }
 
+  requireNonEmptyString(value, label) {
+    if (!value || typeof value !== 'string' || !String(value).trim()) {
+      throw new Error(`Z8: ${label} is required.`)
+    }
+  }
+
+  _detailsJson(details) {
+    if (details === undefined) {
+      return JSON.stringify({})
+    }
+    if (details !== null && typeof details === 'object' && !Array.isArray(details)) {
+      return JSON.stringify(details)
+    }
+    throw new Error('Z8: details must be an object.')
+  }
+
   _encodeFormFields(fields) {
     const body = new URLSearchParams()
     for (const [k, v] of Object.entries(fields)) {
@@ -86,6 +112,20 @@ export class Z8Http {
         'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
       },
       body,
+    })
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => '')
+      throw new Error(`Z8 request failed: ${res.status} ${res.statusText}${text ? `\n${text}` : ''}`)
+    }
+
+    return await res.json()
+  }
+
+  async postMultipart(formData) {
+    const res = await this.fetchImpl(this.url, {
+      method: 'POST',
+      body: formData,
     })
 
     if (!res.ok) {
@@ -248,7 +288,37 @@ export class Z8Http {
     })
   }
 
-  async attach() {}
+  /**
+   * Прикрепление файла к записи Z8 API (`action: 'attach'`, multipart/form-data).
+   * @param {Z8AttachOptions} [options]
+   * @returns {Promise<object>}
+   */
+  async attach({ request, recordId, field, details, file, fileName } = {}) {
+    this.requireSession()
+    this.requireRequest(request)
+    this.requireNonEmptyString(recordId, 'recordId')
+    this.requireNonEmptyString(field, 'field')
+
+    if (!(file instanceof Blob)) {
+      throw new Error('Z8: file must be a Blob or File.')
+    }
+
+    const form = new FormData()
+    form.append('request', request)
+    form.append('action', 'attach')
+    form.append('recordId', String(recordId).trim())
+    form.append('field', String(field).trim())
+    form.append('details', this._detailsJson(details))
+    form.append('session', this.session)
+
+    const name =
+      (typeof fileName === 'string' && fileName.trim()) ||
+      (typeof File !== 'undefined' && file instanceof File && file.name) ||
+      'upload.bin'
+    form.append('file', file, name)
+
+    return await this.postMultipart(form)
+  }
 
   async detach() {}
 
