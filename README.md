@@ -23,6 +23,33 @@ client.setSession(loginJson.session)
 const rows = await client.read({ request: 'MyRegister', limit: 50 })
 ```
 
+## Server messages (`info.messages`)
+
+After each successful JSON response, if the payload contains `info.messages`, the client invokes an `onMessages` handler.
+
+- **Constructor** — `new Z8Http({ onMessages: (messages) => { ... } })` sets the default handler for all calls.
+- **Per call** — pass `onMessages` in method options, e.g. `read({ request: 'MyRegister', onMessages: handler })`, or as the third argument to `login(login, password, { onMessages })`.
+- **Priority** — per-call handler overrides the instance handler.
+- **Default** — `defaultOnMessages` logs non-empty messages to the console (`[Z8:type] text`).
+
+```js
+import { Z8Http, defaultOnMessages } from 'z8-http'
+
+const client = new Z8Http({
+  url: 'https://your-host/request.json',
+  onMessages: (messages) => {
+    for (const m of messages) console.warn(m.text)
+  },
+})
+
+// Override only for this request:
+await client.read({
+  request: 'MyRegister',
+  limit: 10,
+  onMessages: defaultOnMessages,
+})
+```
+
 ## Integration tests (real API)
 
 Tests call a live Z8 server. Use a **test stand** and a register with CRUD permissions only.

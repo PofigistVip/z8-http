@@ -1,1 +1,1 @@
-export { Z8Http } from './z8-http.js'
+export { Z8Http, defaultOnMessages } from './z8-http.js'

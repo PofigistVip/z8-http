@@ -1,4 +1,30 @@
 /**
+ * @typedef {Object} Z8Message
+ * @property {string} [text]
+ * @property {string} [type]
+ * @property {string} [source]
+ * @property {string} [time]
+ */
+
+/**
+ * @callback Z8MessagesHandler
+ * @param {Z8Message[]} messages
+ */
+
+/**
+ * @typedef {Object} Z8HttpOptions
+ * @property {string} [url]
+ * @property {string|null} [session]
+ * @property {typeof fetch} [fetchImpl]
+ * @property {Z8MessagesHandler} [onMessages]
+ */
+
+/**
+ * @typedef {Object} Z8CallOptions
+ * @property {Z8MessagesHandler} [onMessages]
+ */
+
+/**
  * @typedef {Object} Z8Period
  * @property {string|null} [start]
  * @property {string|null} [finish]
@@ -17,18 +43,21 @@
  * @property {Z8Period} [period] - Период отбора по датам.
  * @property {number} [start=0] - Смещение постраничного чтения.
  * @property {number} [limit=200] - Максимум записей в ответе.
+ * @property {Z8MessagesHandler} [onMessages]
  */
 
 /**
  * @typedef {Object} Z8DestroyOptions
  * @property {string} request - Имя запроса/регистра в Z8 (обязательный).
  * @property {string[]} [ids] - Идентификаторы записей для удаления.
+ * @property {Z8MessagesHandler} [onMessages]
  */
 
 /**
  * @typedef {Object} Z8WriteOptions
  * @property {string} request - Имя запроса/регистра в Z8 (обязательный).
  * @property {object[]} [data] - Записи для создания или обновления.
+ * @property {Z8MessagesHandler} [onMessages]
  */
 
 /**
@@ -37,6 +66,7 @@
  * @property {string} name - Имя action на сервере.
  * @property {object[]} [records] - Записи для action.
  * @property {object[]} [parameters] - Параметры action.
+ * @property {Z8MessagesHandler} [onMessages]
  */
 
 /**
@@ -47,7 +77,19 @@
  * @property {Object} [details] - JSON-объект метаданных вложения (по умолчанию `{}`).
  * @property {Blob|File} file - Файл для загрузки.
  * @property {string} [fileName] - Имя файла в multipart (если не задано — из File или `upload.bin`).
+ * @property {Z8MessagesHandler} [onMessages]
  */
+
+export function defaultOnMessages(messages) {
+  for (const m of messages) {
+    if (!m || typeof m !== 'object') continue
+    const text = typeof m.text === 'string' ? m.text.trim() : ''
+    if (!text) continue
+    const type = typeof m.type === 'string' ? m.type : 'info'
+    const extra = [m.source, m.time].filter(Boolean).join(' · ')
+    console.log(`[Z8:${type}]`, text, extra || '')
+  }
+}
 
 function defaultFetchImpl() {
   const f = globalThis.fetch
@@ -60,6 +102,19 @@ export class Z8Http {
     this.url = options.url ?? '/request.json'
     this.session = options.session ?? null
     this.fetchImpl = options.fetchImpl ?? defaultFetchImpl()
+    this.onMessages = options.onMessages ?? defaultOnMessages
+  }
+
+  _splitOptions(options = {}) {
+    const { onMessages, ...rest } = options
+    return { apiOptions: rest, onMessages }
+  }
+
+  _dispatchMessages(json, perCallOnMessages) {
+    const raw = json?.info?.messages
+    if (!Array.isArray(raw) || !raw.length) return
+    const handler = perCallOnMessages ?? this.onMessages
+    if (typeof handler === 'function') handler(raw)
   }
 
   setSession(session) {
@@ -109,7 +164,11 @@ export class Z8Http {
     return body
   }
 
-  async postForm(fields) {
+  /**
+   * @param {object} fields
+   * @param {Z8CallOptions} [callOptions]
+   */
+  async postForm(fields, callOptions = {}) {
     const body = this._encodeFormFields(fields)
 
     const res = await this.fetchImpl(this.url, {
@@ -125,10 +184,16 @@ export class Z8Http {
       throw new Error(`Z8 request failed: ${res.status} ${res.statusText}${text ? `\n${text}` : ''}`)
     }
 
-    return await res.json()
+    const json = await res.json()
+    this._dispatchMessages(json, callOptions.onMessages)
+    return json
   }
 
-  async postMultipart(formData) {
+  /**
+   * @param {FormData} formData
+   * @param {Z8CallOptions} [callOptions]
+   */
+  async postMultipart(formData, callOptions = {}) {
     const res = await this.fetchImpl(this.url, {
       method: 'POST',
       body: formData,
@@ -139,16 +204,20 @@ export class Z8Http {
       throw new Error(`Z8 request failed: ${res.status} ${res.statusText}${text ? `\n${text}` : ''}`)
     }
 
-    return await res.json()
+    const json = await res.json()
+    this._dispatchMessages(json, callOptions.onMessages)
+    return json
   }
 
   /**
    * Авторизация в Z8 API (`request: 'login'`).
    * @param {string} login
    * @param {string} [password]
+   * @param {Z8CallOptions} [options]
    * @returns {Promise<object>}
    */
-  async login(login, password) {
+  async login(login, password, options = {}) {
+    const { onMessages } = options
     const payload = {
       request: 'login',
       login,
@@ -160,7 +229,7 @@ export class Z8Http {
       payload.password = pwd
     }
 
-    return await this.postForm(payload)
+    return await this.postForm(payload, { onMessages })
   }
 
   /**
@@ -225,7 +294,8 @@ export class Z8Http {
    * @returns {Promise<object>}
    */
   async read(options = {}) {
-    return await this.postForm(this._buildReadPayload(options))
+    const { apiOptions, onMessages } = this._splitOptions(options)
+    return await this.postForm(this._buildReadPayload(apiOptions), { onMessages })
   }
 
   /**
@@ -234,9 +304,10 @@ export class Z8Http {
    * @returns {Promise<object>}
    */
   async count(options = {}) {
-    const payload = this._buildReadPayload(options)
+    const { apiOptions, onMessages } = this._splitOptions(options)
+    const payload = this._buildReadPayload(apiOptions)
     payload.count = 'true'
-    return await this.postForm(payload)
+    return await this.postForm(payload, { onMessages })
   }
 
   /**
@@ -244,16 +315,21 @@ export class Z8Http {
    * @param {Z8WriteOptions} [options]
    * @returns {Promise<object>}
    */
-  async create({ request, data } = {}) {
+  async create(options = {}) {
+    const { apiOptions, onMessages } = this._splitOptions(options)
+    const { request, data } = apiOptions
     this.requireSession()
     this.requireRequest(request)
 
-    return await this.postForm({
-      request,
-      action: 'create',
-      data: Array.isArray(data) ? data : [data],
-      session: this.session,
-    })
+    return await this.postForm(
+      {
+        request,
+        action: 'create',
+        data: Array.isArray(data) ? data : [data],
+        session: this.session,
+      },
+      { onMessages }
+    )
   }
 
   /**
@@ -261,16 +337,21 @@ export class Z8Http {
    * @param {Z8WriteOptions} [options]
    * @returns {Promise<object>}
    */
-  async update({ request, data } = {}) {
+  async update(options = {}) {
+    const { apiOptions, onMessages } = this._splitOptions(options)
+    const { request, data } = apiOptions
     this.requireSession()
     this.requireRequest(request)
 
-    return await this.postForm({
-      request,
-      action: 'update',
-      data: Array.isArray(data) ? data : [data],
-      session: this.session,
-    })
+    return await this.postForm(
+      {
+        request,
+        action: 'update',
+        data: Array.isArray(data) ? data : [data],
+        session: this.session,
+      },
+      { onMessages }
+    )
   }
 
   /**
@@ -278,7 +359,9 @@ export class Z8Http {
    * @param {Z8DestroyOptions} [options]
    * @returns {Promise<object>}
    */
-  async destroy({ request, ids } = {}) {
+  async destroy(options = {}) {
+    const { apiOptions, onMessages } = this._splitOptions(options)
+    const { request, ids } = apiOptions
     this.requireSession()
     this.requireRequest(request)
 
@@ -286,12 +369,15 @@ export class Z8Http {
       ? ids.map((id) => ({ recordId: String(id) }))
       : []
 
-    return await this.postForm({
-      request,
-      action: 'destroy',
-      data,
-      session: this.session,
-    })
+    return await this.postForm(
+      {
+        request,
+        action: 'destroy',
+        data,
+        session: this.session,
+      },
+      { onMessages }
+    )
   }
 
   /**
@@ -299,7 +385,9 @@ export class Z8Http {
    * @param {Z8AttachOptions} [options]
    * @returns {Promise<object>}
    */
-  async attach({ request, recordId, field, details, file, fileName } = {}) {
+  async attach(options = {}) {
+    const { apiOptions, onMessages } = this._splitOptions(options)
+    const { request, recordId, field, details, file, fileName } = apiOptions
     this.requireSession()
     this.requireRequest(request)
     this.requireNonEmptyString(recordId, 'recordId')
@@ -323,7 +411,7 @@ export class Z8Http {
       'upload.bin'
     form.append('file', file, name)
 
-    return await this.postMultipart(form)
+    return await this.postMultipart(form, { onMessages })
   }
 
   async detach() {}
@@ -333,19 +421,24 @@ export class Z8Http {
    * @param {Z8ActionOptions} [options]
    * @returns {Promise<object>}
    */
-  async action({ request, name, records, parameters = [] } = {}) {
+  async action(options = {}) {
+    const { apiOptions, onMessages } = this._splitOptions(options)
+    const { request, name, records, parameters = [] } = apiOptions
     this.requireSession()
     this.requireRequest(request)
     this.requireName(name)
 
-    return await this.postForm({
-      request,
-      action: 'action',
-      name,
-      records: Array.isArray(records) ? records : [],
-      parameters: Array.isArray(parameters) ? parameters : [],
-      session: this.session,
-    })
+    return await this.postForm(
+      {
+        request,
+        action: 'action',
+        name,
+        records: Array.isArray(records) ? records : [],
+        parameters: Array.isArray(parameters) ? parameters : [],
+        session: this.session,
+      },
+      { onMessages }
+    )
   }
 
   async export() {}
