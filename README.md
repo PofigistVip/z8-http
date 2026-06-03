@@ -23,6 +23,21 @@ client.setSession(loginJson.session)
 const rows = await client.read({ request: 'MyRegister', limit: 50 })
 ```
 
+## Long-running jobs (`job`)
+
+`job()` starts a server task by `request` and `period`, then polls until the response has `done === true`. While the task runs, each poll sends `request`, `server`, and `job` (task `id`) from the previous response, plus `session`.
+
+```js
+const result = await client.job({
+  request: 'org.zenframework.z8.server.db.generator.SchemaGenerator',
+  period: { start: null, finish: null },
+  pollIntervalMs: 1000,
+})
+// result.done === true when finished
+```
+
+`pollIntervalMs` defaults to `1000`. Server messages from intermediate responses are delivered through `onMessages` like other API calls.
+
 ## Server messages (`info.messages`)
 
 After each successful JSON response, if the payload contains `info.messages`, the client invokes an `onMessages` handler.

@@ -70,6 +70,14 @@
  */
 
 /**
+ * @typedef {Object} Z8JobOptions
+ * @property {string} request - Класс/имя серверной задачи Z8 (обязательный).
+ * @property {Z8Period} [period] - Период отбора по датам.
+ * @property {number} [pollIntervalMs=1000] - Пауза между запросами опроса статуса задачи.
+ * @property {Z8MessagesHandler} [onMessages]
+ */
+
+/**
  * @typedef {Object} Z8AttachOptions
  * @property {string} request - Имя запроса/регистра в Z8 (обязательный).
  * @property {string} recordId - Идентификатор записи.
@@ -162,6 +170,23 @@ export class Z8Http {
       body.set(k, typeof v === 'string' ? v : JSON.stringify(v))
     }
     return body
+  }
+
+  _sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms))
+  }
+
+  _jobErrorMessage(json) {
+    if (typeof json?.text === 'string' && json.text.trim()) return json.text.trim()
+    if (typeof json?.message === 'string' && json.message.trim()) return json.message.trim()
+    if (typeof json?.error === 'string' && json.error.trim()) return json.error.trim()
+    return JSON.stringify(json ?? {})
+  }
+
+  _assertJobSuccess(json) {
+    if (json?.success === false) {
+      throw new Error(this._jobErrorMessage(json) || 'Z8 job failed')
+    }
   }
 
   /**
@@ -439,6 +464,67 @@ export class Z8Http {
       },
       { onMessages }
     )
+  }
+
+  /**
+   * Запуск серверной задачи Z8 и опрос до завершения (`done === true`).
+   * @param {Z8JobOptions} [options]
+   * @returns {Promise<object>}
+   */
+  async job(options = {}) {
+    const { apiOptions, onMessages } = this._splitOptions(options)
+    const {
+      request,
+      period = { start: null, finish: null },
+      pollIntervalMs = 1000,
+    } = apiOptions
+
+    this.requireSession()
+    this.requireRequest(request)
+
+    let json = await this.postForm(
+      {
+        request,
+        period,
+        session: this.session,
+      },
+      { onMessages }
+    )
+    this._assertJobSuccess(json)
+
+    while (json.done !== true) {
+      const jobId = json.id
+      const server = json.server
+      const pollRequest = json.request
+      if (
+        !jobId ||
+        typeof jobId !== 'string' ||
+        !String(jobId).trim() ||
+        !server ||
+        typeof server !== 'string' ||
+        !String(server).trim() ||
+        !pollRequest ||
+        typeof pollRequest !== 'string' ||
+        !String(pollRequest).trim()
+      ) {
+        throw new Error('Z8: job poll requires id and server from response.')
+      }
+
+      await this._sleep(pollIntervalMs)
+
+      json = await this.postForm(
+        {
+          request: pollRequest,
+          server,
+          job: jobId,
+          session: this.session,
+        },
+        { onMessages }
+      )
+      this._assertJobSuccess(json)
+    }
+
+    return json
   }
 
   async export() {}

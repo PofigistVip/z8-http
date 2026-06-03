@@ -7,7 +7,7 @@
     ".": "./src/index.js"
   },
   "scripts": {
-    "test": "node --test test/unit/messages.test.js test/integration/z8-api.test.js",
+    "test": "node --test test/unit/*.test.js test/integration/z8-api.test.js",
     "test:integration": "node --test test/integration/z8-api.test.js"
   },
   "keywords": [],
