@@ -31,6 +31,14 @@
  * @property {object[]} [data] - Записи для создания или обновления.
  */
 
+/**
+ * @typedef {Object} Z8ActionOptions
+ * @property {string} request - Имя запроса/регистра в Z8 (обязательный).
+ * @property {string} name - Имя action на сервере.
+ * @property {object[]} [records] - Записи для action.
+ * @property {object[]} [parameters] - Параметры action.
+ */
+
 export class Z8Http {
   constructor(options = {}) {
     this.url = options.url ?? '/request.json'
@@ -51,6 +59,12 @@ export class Z8Http {
   requireRequest(request) {
     if (!request || typeof request !== 'string' || !String(request).trim()) {
       throw new Error('Z8: request is required.')
+    }
+  }
+
+  requireName(name) {
+    if (!name || typeof name !== 'string' || !String(name).trim()) {
+      throw new Error('Z8: name is required.')
     }
   }
 
@@ -238,7 +252,25 @@ export class Z8Http {
 
   async detach() {}
 
-  async action() {}
+  /**
+   * Выполнение серверного action Z8 API (`action: 'action'`).
+   * @param {Z8ActionOptions} [options]
+   * @returns {Promise<object>}
+   */
+  async action({ request, name, records, parameters = [] } = {}) {
+    this.requireSession()
+    this.requireRequest(request)
+    this.requireName(name)
+
+    return await this.postForm({
+      request,
+      action: 'action',
+      name,
+      records: Array.isArray(records) ? records : [],
+      parameters: Array.isArray(parameters) ? parameters : [],
+      session: this.session,
+    })
+  }
 
   async export() {}
 
