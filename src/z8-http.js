@@ -49,11 +49,17 @@
  * @property {string} [fileName] - Имя файла в multipart (если не задано — из File или `upload.bin`).
  */
 
+function defaultFetchImpl() {
+  const f = globalThis.fetch
+  if (typeof f !== 'function') return f
+  return f.bind(globalThis)
+}
+
 export class Z8Http {
   constructor(options = {}) {
     this.url = options.url ?? '/request.json'
     this.session = options.session ?? null
-    this.fetchImpl = options.fetchImpl ?? globalThis.fetch
+    this.fetchImpl = options.fetchImpl ?? defaultFetchImpl()
   }
 
   setSession(session) {
