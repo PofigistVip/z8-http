@@ -88,6 +88,27 @@
  * @property {Z8MessagesHandler} [onMessages]
  */
 
+/**
+ * @typedef {Object} Z8DetachOptions
+ * @property {string} request - Имя запроса/регистра в Z8 (обязательный).
+ * @property {string} recordId - Идентификатор записи.
+ * @property {string} field - Имя поля вложения.
+ * @property {object[]} data - Массив объектов вложений для отвязки.
+ * @property {Z8MessagesHandler} [onMessages]
+ */
+
+/**
+ * @typedef {Object} Z8ExportOptions
+ * @property {string} request - Имя запроса/регистра в Z8 (обязательный).
+ * @property {string} [format='pdf'] - Формат экспорта.
+ * @property {object[]} columns - Описание колонок для экспорта (обязательный массив).
+ * @property {object[]} [quickFilter] - Быстрые фильтры UI.
+ * @property {object[]} [filter] - Условия фильтрации записей.
+ * @property {object[]} [where] - Дополнительные условия отбора.
+ * @property {Z8Period} [period] - Период отбора по датам.
+ * @property {Z8MessagesHandler} [onMessages]
+ */
+
 export function defaultOnMessages(messages) {
   for (const m of messages) {
     if (!m || typeof m !== 'object') continue
@@ -314,6 +335,49 @@ export class Z8Http {
   }
 
   /**
+   * Собирает payload для `export` (`action: 'export'`).
+   * @param {Z8ExportOptions} [options]
+   * @returns {object}
+   * @private
+   */
+  _buildExportPayload({
+    request,
+    format = 'pdf',
+    columns,
+    quickFilter,
+    filter,
+    where,
+    period = { start: null, finish: null },
+  } = {}) {
+    this.requireSession()
+    this.requireRequest(request)
+    if (!Array.isArray(columns)) {
+      throw new Error('Z8: columns must be an array.')
+    }
+
+    const payload = {
+      action: 'export',
+      request,
+      format: format ?? 'pdf',
+      columns,
+      period,
+      session: this.session,
+    }
+
+    if (Array.isArray(quickFilter) && quickFilter.length > 0) {
+      payload.quickFilter = quickFilter
+    }
+    if (Array.isArray(filter) && filter.length > 0) {
+      payload.filter = filter
+    }
+    if (Array.isArray(where) && where.length > 0) {
+      payload.where = where
+    }
+
+    return payload
+  }
+
+  /**
    * Чтение данных регистра/запроса Z8 API (`action: 'read'`).
    * @param {Z8ReadOptions} [options]
    * @returns {Promise<object>}
@@ -439,7 +503,34 @@ export class Z8Http {
     return await this.postMultipart(form, { onMessages })
   }
 
-  async detach() {}
+  /**
+   * Отвязка вложений от записи Z8 API (`action: 'detach'`).
+   * @param {Z8DetachOptions} [options]
+   * @returns {Promise<object>}
+   */
+  async detach(options = {}) {
+    const { apiOptions, onMessages } = this._splitOptions(options)
+    const { request, recordId, field, data } = apiOptions
+    this.requireSession()
+    this.requireRequest(request)
+    this.requireNonEmptyString(recordId, 'recordId')
+    this.requireNonEmptyString(field, 'field')
+    if (!Array.isArray(data)) {
+      throw new Error('Z8: data must be an array.')
+    }
+
+    return await this.postForm(
+      {
+        request,
+        action: 'detach',
+        recordId: String(recordId).trim(),
+        field: String(field).trim(),
+        data,
+        session: this.session,
+      },
+      { onMessages }
+    )
+  }
 
   /**
    * Выполнение серверного action Z8 API (`action: 'action'`).
@@ -527,7 +618,15 @@ export class Z8Http {
     return json
   }
 
-  async export() {}
+  /**
+   * Экспорт данных регистра Z8 API (`action: 'export'`).
+   * @param {Z8ExportOptions} [options]
+   * @returns {Promise<object>}
+   */
+  async export(options = {}) {
+    const { apiOptions, onMessages } = this._splitOptions(options)
+    return await this.postForm(this._buildExportPayload(apiOptions), { onMessages })
+  }
 
   async report() {}
 }

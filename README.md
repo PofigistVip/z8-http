@@ -38,6 +38,32 @@ const result = await client.job({
 
 `pollIntervalMs` defaults to `1000`. Server messages from intermediate responses are delivered through `onMessages` like other API calls.
 
+## Attachments (`attach` / `detach`)
+
+`attach()` uploads a file via multipart (`action: 'attach'`). `detach()` removes attachments with `action: 'detach'` and a JSON `data` array (attachment objects as returned from `read`):
+
+```js
+await client.detach({
+  request: 'MyRegister',
+  recordId: '...',
+  field: 'attachments',
+  data: [{ /* attachment objects */ }],
+})
+```
+
+## Export (`export`)
+
+`export()` builds a register export (`action: 'export'`). `format` defaults to `pdf`; `columns` is required (array of column objects). Filters match `read`: `quickFilter`, `filter`, `where`, `period`.
+
+```js
+await client.export({
+  request: 'MyRegister',
+  format: 'pdf',
+  columns: [{ /* column defs */ }],
+  period: { start: null, finish: null },
+})
+```
+
 ## Server messages (`info.messages`)
 
 After each successful JSON response, if the payload contains `info.messages`, the client invokes an `onMessages` handler.
