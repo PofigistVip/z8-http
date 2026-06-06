@@ -12,6 +12,13 @@
  */
 
 /**
+ * @callback Z8BeforeRequestHandler
+ * @param {'read'|'count'|'create'|'update'|'destroy'|'request'} method
+ * @param {object} payload - Тело form-запроса (можно мутировать).
+ * @returns {object|void} - Если вернуть объект, он заменит payload.
+ */
+
+/**
  * @typedef {Object} Z8HttpOptions
  * @property {string} [url]
  * @property {string|null} [session]
@@ -22,6 +29,15 @@
 /**
  * @typedef {Object} Z8CallOptions
  * @property {Z8MessagesHandler} [onMessages]
+ * @property {Z8BeforeRequestHandler} [beforeRequest]
+ */
+
+/**
+ * @typedef {Object} Z8RequestOptions
+ * @property {object} payload - Тело form-запроса (обязательный plain object).
+ * @property {boolean} [withSession=true] - Добавить `session` из клиента в payload.
+ * @property {Z8MessagesHandler} [onMessages]
+ * @property {Z8BeforeRequestHandler} [beforeRequest]
  */
 
 /**
@@ -44,6 +60,7 @@
  * @property {number} [start=0] - Смещение постраничного чтения.
  * @property {number} [limit=200] - Максимум записей в ответе.
  * @property {Z8MessagesHandler} [onMessages]
+ * @property {Z8BeforeRequestHandler} [beforeRequest]
  */
 
 /**
@@ -51,6 +68,7 @@
  * @property {string} request - Имя запроса/регистра в Z8 (обязательный).
  * @property {string[]} [ids] - Идентификаторы записей для удаления.
  * @property {Z8MessagesHandler} [onMessages]
+ * @property {Z8BeforeRequestHandler} [beforeRequest]
  */
 
 /**
@@ -58,6 +76,7 @@
  * @property {string} request - Имя запроса/регистра в Z8 (обязательный).
  * @property {object[]} [data] - Записи для создания или обновления.
  * @property {Z8MessagesHandler} [onMessages]
+ * @property {Z8BeforeRequestHandler} [beforeRequest]
  */
 
 /**
@@ -135,8 +154,24 @@ export class Z8Http {
   }
 
   _splitOptions(options = {}) {
-    const { onMessages, ...rest } = options
-    return { apiOptions: rest, onMessages }
+    const { onMessages, beforeRequest, ...rest } = options
+    return { apiOptions: rest, onMessages, beforeRequest }
+  }
+
+  /**
+   * @param {'read'|'count'|'create'|'update'|'destroy'|'request'} method
+   * @param {object} payload
+   * @param {Z8BeforeRequestHandler} [beforeRequest]
+   * @returns {object}
+   * @private
+   */
+  _applyBeforeRequest(method, payload, beforeRequest) {
+    if (typeof beforeRequest !== 'function') return payload
+    const result = beforeRequest(method, payload)
+    if (result !== undefined && result !== null && typeof result === 'object') {
+      return result
+    }
+    return payload
   }
 
   _dispatchMessages(json, perCallOnMessages) {
@@ -279,6 +314,26 @@ export class Z8Http {
   }
 
   /**
+   * Произвольный form-запрос к Z8 API с готовым payload.
+   * @param {Z8RequestOptions} [options]
+   * @returns {Promise<object>}
+   */
+  async request(options = {}) {
+    const { payload, withSession = true, onMessages, beforeRequest } = options
+
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+      throw new Error('Z8: payload must be an object.')
+    }
+    if (withSession) this.requireSession()
+
+    let body = { ...payload }
+    if (withSession) body.session = this.session
+
+    body = this._applyBeforeRequest('request', body, beforeRequest)
+    return await this.postForm(body, { onMessages })
+  }
+
+  /**
    * Собирает payload для `read` / `count` (`action: 'read'`).
    * @param {Z8ReadOptions} [options]
    * @returns {object}
@@ -383,8 +438,10 @@ export class Z8Http {
    * @returns {Promise<object>}
    */
   async read(options = {}) {
-    const { apiOptions, onMessages } = this._splitOptions(options)
-    return await this.postForm(this._buildReadPayload(apiOptions), { onMessages })
+    const { apiOptions, onMessages, beforeRequest } = this._splitOptions(options)
+    let payload = this._buildReadPayload(apiOptions)
+    payload = this._applyBeforeRequest('read', payload, beforeRequest)
+    return await this.postForm(payload, { onMessages })
   }
 
   /**
@@ -393,9 +450,10 @@ export class Z8Http {
    * @returns {Promise<object>}
    */
   async count(options = {}) {
-    const { apiOptions, onMessages } = this._splitOptions(options)
-    const payload = this._buildReadPayload(apiOptions)
+    const { apiOptions, onMessages, beforeRequest } = this._splitOptions(options)
+    let payload = this._buildReadPayload(apiOptions)
     payload.count = 'true'
+    payload = this._applyBeforeRequest('count', payload, beforeRequest)
     return await this.postForm(payload, { onMessages })
   }
 
@@ -405,20 +463,19 @@ export class Z8Http {
    * @returns {Promise<object>}
    */
   async create(options = {}) {
-    const { apiOptions, onMessages } = this._splitOptions(options)
+    const { apiOptions, onMessages, beforeRequest } = this._splitOptions(options)
     const { request, data } = apiOptions
     this.requireSession()
     this.requireRequest(request)
 
-    return await this.postForm(
-      {
-        request,
-        action: 'create',
-        data: Array.isArray(data) ? data : [data],
-        session: this.session,
-      },
-      { onMessages }
-    )
+    let payload = {
+      request,
+      action: 'create',
+      data: Array.isArray(data) ? data : [data],
+      session: this.session,
+    }
+    payload = this._applyBeforeRequest('create', payload, beforeRequest)
+    return await this.postForm(payload, { onMessages })
   }
 
   /**
@@ -427,20 +484,19 @@ export class Z8Http {
    * @returns {Promise<object>}
    */
   async update(options = {}) {
-    const { apiOptions, onMessages } = this._splitOptions(options)
+    const { apiOptions, onMessages, beforeRequest } = this._splitOptions(options)
     const { request, data } = apiOptions
     this.requireSession()
     this.requireRequest(request)
 
-    return await this.postForm(
-      {
-        request,
-        action: 'update',
-        data: Array.isArray(data) ? data : [data],
-        session: this.session,
-      },
-      { onMessages }
-    )
+    let payload = {
+      request,
+      action: 'update',
+      data: Array.isArray(data) ? data : [data],
+      session: this.session,
+    }
+    payload = this._applyBeforeRequest('update', payload, beforeRequest)
+    return await this.postForm(payload, { onMessages })
   }
 
   /**
@@ -449,7 +505,7 @@ export class Z8Http {
    * @returns {Promise<object>}
    */
   async destroy(options = {}) {
-    const { apiOptions, onMessages } = this._splitOptions(options)
+    const { apiOptions, onMessages, beforeRequest } = this._splitOptions(options)
     const { request, ids } = apiOptions
     this.requireSession()
     this.requireRequest(request)
@@ -458,15 +514,14 @@ export class Z8Http {
       ? ids.map((id) => ({ recordId: String(id) }))
       : []
 
-    return await this.postForm(
-      {
-        request,
-        action: 'destroy',
-        data,
-        session: this.session,
-      },
-      { onMessages }
-    )
+    let payload = {
+      request,
+      action: 'destroy',
+      data,
+      session: this.session,
+    }
+    payload = this._applyBeforeRequest('destroy', payload, beforeRequest)
+    return await this.postForm(payload, { onMessages })
   }
 
   /**

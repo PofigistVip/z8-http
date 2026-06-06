@@ -64,6 +64,37 @@ await client.export({
 })
 ```
 
+## Request hook (`beforeRequest`)
+
+For `read`, `count`, `create`, `update`, `destroy`, and `request` you can pass `beforeRequest(method, payload)` in options. It runs after the client builds the form payload and before `postForm`. Mutate `payload` in place, or return a new object to replace it. `method` is one of `'read'`, `'count'`, `'create'`, `'update'`, `'destroy'`, `'request'` (for `count`, `payload` already includes `count: 'true'`).
+
+```js
+await client.read({
+  request: 'MyRegister',
+  beforeRequest(method, payload) {
+    payload.customField = 'value'
+  },
+})
+```
+
+## Generic request (`request`)
+
+`request()` sends an arbitrary form payload. By default (`withSession: true`) it requires a logged-in client and sets `payload.session` from the instance. Use `withSession: false` for login-like calls without a session.
+
+```js
+await client.request({
+  payload: { request: 'MyRegister', action: 'read', limit: 10 },
+  beforeRequest(method, payload) {
+    payload.customField = 'value'
+  },
+})
+
+await client.request({
+  payload: { request: 'login', login: 'user', password: 'pass', experimental: true },
+  withSession: false,
+})
+```
+
 ## Server messages (`info.messages`)
 
 After each successful JSON response, if the payload contains `info.messages`, the client invokes an `onMessages` handler.
